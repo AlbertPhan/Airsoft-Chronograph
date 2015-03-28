@@ -16,14 +16,14 @@ D3 Up Button
 D2 Test Button
 
 Comparator
-AIN0 D6 Positive pin
+AIN0 D6 Positive pin IR receivers outputs
 AIN1 D7 Negative pin (reference pin) ~0.3-1V
 
 */
 
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-#include <Bounce2.h> //uses modified bounce2 library
+#include <Bounce2.h>
 
 #define IRSPACING 0.080 //80 mm
 #define CLKPERIOD 0.0000000625  //62.5 nS 16MHz external Oscillator
@@ -33,23 +33,19 @@ AIN1 D7 Negative pin (reference pin) ~0.3-1V
 #define DOWN_BTN 4
 #define UP_BTN 3
 #define TEST_BTN 2
+#define LED_PIN 13
 
-#define DEBOUNCE_TIME 5 // How many ms must pass before the button is considered stable
-#define REPEAT_INTERVAL 50 // How many ms inbetween button presses while holding it down
-
+#define DEBOUNCE_TIME 10 // How many ms must pass before the button is considered stable
+#define REPEAT_INTERVAL 50 // How many ms in between button presses while holding it down
 
 #define	NORMALIZED 0
 #define	RATEOFFIRE 1
 #define	AVERAGING 2
 
-
 Bounce okBtn(OK_BTN,DEBOUNCE_TIME);
 Bounce upBtn(UP_BTN, DEBOUNCE_TIME);
 Bounce downBtn(DOWN_BTN, DEBOUNCE_TIME);
-Bounce testBtn(TEST_BTN,DEBOUNCE_TIME);
-
-
-
+Bounce testBtn(TEST_BTN, DEBOUNCE_TIME);
 
 LiquidCrystal_I2C lcd(0x27,16,2);  // set the LCD address to 0x27 for a 16 chars and 2 line display
 
@@ -61,14 +57,18 @@ unsigned char bbDecrementFlag = 0;
 unsigned char bbIncrementFlag = 0;
 unsigned char menuIncrementFlag = 0;
 unsigned char menuDecrementFlag = 0;
+unsigned char ledState = 0;
 
 unsigned long int timerOverflows = 0;
 unsigned long int previous_millis = 0;
 
-unsigned int bbAvgcount = 0;
+unsigned int bbCount = 0;
 
 double fps = 338.06;	//initially 338.06 for testing
 double normalizedfps = 0;
+double minfps = 0;
+double maxfps = 0;
+//double averagefps = 0;
 double averageSum = 0;
 
 unsigned char bbWeight = 28;	//initially 0.28g as it is the most common
@@ -88,6 +88,10 @@ ISR (ANALOG_COMP_vect) //When bb passes a beam.
 		if(fps <= 5000)
 		{
 			dataReady = 1;
+			if(menuState == AVERAGING)
+			{
+				bbCount++;	//increments only in averaging mode
+			}
 		}
 		else
 		{
@@ -132,6 +136,7 @@ void setup()
 	| bit(ACIS1)  // ACIS1, ACIS0: Analog Comparator Interrupt Mode Select (trigger on rising edge)
 	| bit(ACIS0);
 	
+	pinMode(LED_PIN, OUTPUT); // Debugging led
 	
 	//16 bit Timer1 setup (used for bb fps calculations)
 	TCCR1A = 0;  //normal mode counts up to 0xFFFF and restarts
@@ -140,8 +145,9 @@ void setup()
 	
 	// timer0 used for delay functions in lcd library do not use timer0
 	
-	//Serial.begin (115200);
-	//Serial.println ("Started.");
+	// Serial stuff for debugging
+	Serial.begin(115200);
+	Serial.println("Started.");
 	
 	lcd.init();                      // initialize the lcd
 	
@@ -168,7 +174,7 @@ void setup()
 	
 	// Displays test fps
 	dataReady = 1;
-	updateFlag = 1 ; 
+	updateFlag = 1 ;
 }
 
 void loop()
@@ -219,12 +225,35 @@ void loop()
 	}
 	
 	// Testing button, used for generating fake fps numbers
-	if(testBtn.rose())
+	//if(testBtn.rose())
+	//{
+		//fps = (double)((rand() % 500 + 1) + ((rand() % 101 + 1)/100.0));
+		//dataReady = 1;
+		//if(menuState == AVERAGING)
+		//{
+			//bbCount++;	//increments only in averaging mode
+		//}
+		//updateFlag = 1;
+	//}
+	//
+	// testing of retrigger seems to be broken?
+	if(testBtn.retrigger())
 	{
 		fps = (double)((rand() % 500 + 1) + ((rand() % 101 + 1)/100.0));
 		dataReady = 1;
+		if(menuState == AVERAGING)
+		{
+			bbCount++;	//increments only in averaging mode
+		}
 		updateFlag = 1;
-	}	
+		
+		// debugging 
+		ledState = 1;
+		digitalWrite(LED_PIN, ledState);
+		Serial.print(millis());
+		Serial.println(" Retriggered!");
+	}
+
 	////////////////////////////////////////////////
 	// Menu specific code
 	if(menuState == NORMALIZED)
@@ -242,7 +271,7 @@ void loop()
 			}
 		}
 		// if up or down was pressed while editing
-		if((upBtn.rose() || downBtn.rose()) && editingFlag)
+		if(editingFlag)
 		{
 			if(upBtn.rose())
 			{
@@ -253,33 +282,43 @@ void loop()
 				bbDecrementFlag = 1;
 			}
 		}
-		// if up or down button held down, repeat button presses at REPEAT_INTERVAL
-		if((upBtn.held() || downBtn.held()) && editingFlag)
+		// if up or down button held down while editing, repeat button presses at REPEAT_INTERVAL
+		
+		if(upBtn.retrigger() && editingFlag)
 		{
-			
-			if(previous_millis !=0)
-			{
-				if (millis() - previous_millis >= REPEAT_INTERVAL)
-				{
-					if(upBtn.held())
-					{
-						bbIncrementFlag = 1;	//increment button
-					}
-					else if(downBtn.held())
-					{
-						bbDecrementFlag = 1;	//decrement button
-					}
-					previous_millis = 0;
-				}
-				
-			}
-			else
-			{
-				previous_millis = millis();	
-			}
-			
-			
+			bbIncrementFlag = 1;
 		}
+		else if(downBtn.retrigger() && editingFlag)
+		{
+			bbDecrementFlag = 1;
+		}
+		
+		//if((upBtn.held() || downBtn.held()) && editingFlag)
+		//{
+		//
+		//if(previous_millis !=0)
+		//{
+		//if (millis() - previous_millis >= REPEAT_INTERVAL)
+		//{
+		//if(upBtn.held())
+		//{
+		//bbIncrementFlag = 1;	//increment button
+		//}
+		//else if(downBtn.held())
+		//{
+		//bbDecrementFlag = 1;	//decrement button
+		//}
+		//previous_millis = 0;
+		//}
+		//
+		//}
+		//else
+		//{
+		//previous_millis = millis();
+		//}
+		//
+		//
+		//}
 		
 		// Deals with changing bb weight
 		if(bbIncrementFlag)
@@ -364,15 +403,45 @@ void loop()
 		
 
 	}//end Normalized menu
+	//////////////////////////////////////////////////////////////////////////////////////////////
+	// Averaging Menu
 	else if(menuState == AVERAGING)
 	{
+		// Button stuff
+		if(okBtn.rose())
+		{
+			bbCount	= 0;
+			averageSum = 0;
+			fps = 0;
+			updateFlag = 1;
+		}
+		
 		if(updateFlag)
 		{
+			//if there is good data
+			if(dataReady)
+			{
+				averageSum += fps;
+			}
 			
-			
+			// Printing top row "AVG|FPS:XXX.XX   "
+			//					 01234567890123456
 			lcd.home();
-			lcd.print("");
+			lcd.print("AVG|FPS:");
+			// if bbCount is cleared, just display 0.0 for avg fpss
+			lcd.print(bbCount == 0? 0.0 : averageSum / bbCount);
+			lcd.print("      "); // Clear rest of Row 1
 			
+			// Printing Bottom row "Max Diff:XXX.XX  "
+			//                      01234567890123456
+			lcd.setCursor(0,1);
+			lcd.print("BBs:");
+			lcd.print(bbCount);	//doing bbcounts for now instead of max diff
+			lcd.print(" FPS:");
+			lcd.print(fps); // For debugging
+			lcd.print("     ");
+			
+			updateFlag = 0;
 		}
 		
 		

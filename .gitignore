@@ -43,3 +43,9 @@ Temporary Items
 .apdisk
 *.cppproj
 Visual Micro/.Airsoft-Chronograph.vsarduino.h
+Airsoft-Chronograph.atsuo
+*.eep
+*.elf
+*.hex
+*.xml
+*.a
