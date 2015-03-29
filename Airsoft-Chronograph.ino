@@ -362,7 +362,8 @@ void loop()
 	}
 	else if (menuState == MINMAX)
 	{
-		// Printing top row "MIN:xxx.xx MAX:xxx.xx"
+		// Printing top row "MIN:xxx.xx"
+		//					"MAX:xxx.xx"
 		//					 01234567890123456
 		if (updateFlag)
 		{
