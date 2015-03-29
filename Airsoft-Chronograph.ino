@@ -261,6 +261,7 @@ void loop()
 	}
 	if(testBtn.retrigger())
 	{
+		fps = (double)((rand() % 500 + 1) + ((rand() % 101 + 1)/100.0));
 		fpsReady();
 	}
 
@@ -384,6 +385,7 @@ void fpsReady()
 	bbCount++;
 	averageSum += fps;
 	
+	// Figures out smallest and larget fps
 	if(fps < minfps)
 	{
 		minfps = fps;
