@@ -28,6 +28,8 @@ AIN1 D7 Negative pin (reference pin) ~0.3-1V
 #define IRSPACING 0.080 //80 mm
 #define CLKPERIOD 0.0000000625  //62.5 nS 16MHz external Oscillator
 #define TIMEOUTTIME (20/4.096)	//20 ms/1 overflow time 4.096 mS
+#define BBMINTIME 10			// in us
+#define FPSCONVERSIONFACTOR 3.28084	// meters per second to feet per second
 
 #define OK_BTN 5
 #define DOWN_BTN 4
@@ -65,10 +67,11 @@ unsigned char ledState = 0;
 
 unsigned long int timerOverflows = 0;
 unsigned long int previous_millis = 0;
+unsigned long int previous_micros = 0;
 
 unsigned int bbCount = 0;
 
-double fps = 338.06;	//initially 338.06 for testing
+double fps = 338.06;	//initially 338.06 for testing because it's 400 fps normalized
 double normalizedfps = 0;
 double minfps = 10000;
 double maxfps = 0;
@@ -78,39 +81,50 @@ double averageSum = 0;
 unsigned char bbWeight = 28;	//initially 0.28g as it is the most common
 unsigned char menuState = NORMALIZED;	//starts in normalized menu
 
-// Function Protoype
+// Function Protoypes
 void drawScreen(); // Handles drawing screen for various menus
 void fpsReady();	// Updates dataReady, bbcount, averagesum, min and max.
 
 
-ISR (ANALOG_COMP_vect) //When bb passes a beam.
+ISR (ANALOG_COMP_vect) // When bb passes or leaves an IR beam (or a noise spike).
 {
-	if(bbPresent)  //if bb hit second beam
+	if(ACSR & bit(ACO))	//Comp output rose
 	{
-		//stop timer1
-		TCCR1B = 0;
-		bbPresent = 0;
-		fps = IRSPACING/((TCNT1 + timerOverflows * 65536) * CLKPERIOD) * 3.281;
-		
-		// discard any ridiculous values
-		if(fps <= 5000)
-		{
-			fpsReady();
-		}
-		else
-		{
-			dataReady = 0;
-		}
-		updateFlag = 1;
+		previous_micros = micros();
 	}
-	else  //bb hit first beam
+	else // Comp output fell
 	{
-		//start timer1
-		TCNT1 = 0; //clear timer
-		timerOverflows = 0; //clear overflows
-		TCCR1B = bit(CS10);  // No prescaling 16 Mhz = 62.5 nS period
-		bbPresent = 1;
+		if((micros() - previous_micros ) > BBMINTIME) // Comp output pulse is a bb and not a noise spike
+		{
+			if(bbPresent)  //if bb hit second beam
+			{
+				//stop timer1
+				TCCR1B = 0;
+				bbPresent = 0;
+				fps = IRSPACING/((TCNT1 + timerOverflows * 65536) * CLKPERIOD) * FPSCONVERSIONFACTOR;
+				
+				// discard any ridiculous values
+				if(fps <= 5000)
+				{
+					fpsReady();
+				}
+				else
+				{
+					dataReady = 0;
+				}
+				updateFlag = 1;
+			}
+			else  //bb hit first beam
+			{
+				//start timer1
+				TCNT1 = 0; //clear timer
+				timerOverflows = 0; //clear overflows
+				TCCR1B = bit(CS10);  // No prescaling 16 Mhz = 62.5 nS period
+				bbPresent = 1;
+			}
+		}
 	}
+	
 }
 
 
@@ -137,8 +151,9 @@ void setup()
 	ADCSRB = 0;           // (Disable) ACME: Analog Comparator Multiplexer Enable
 	ACSR =  bit(ACI)     // (Clear) Analog Comparator Interrupt Flag
 	| bit(ACIE)    // Analog Comparator Interrupt Enable
-	| bit(ACIS1)  // ACIS1, ACIS0: Analog Comparator Interrupt Mode Select (trigger on rising edge)
-	| bit(ACIS0);
+	
+	& ~bit(ACIS1)  // ACIS1, ACIS0: Analog Comparator Interrupt Mode Select (trigger on toggle)
+	& ~bit(ACIS0);
 	
 	
 	// Pin Setups
@@ -428,7 +443,7 @@ void drawScreen()
 		lcd.print("FPS|0.20g:");
 		lcd.print("      "); //clears the fps space
 		lcd.setCursor(10,1);
-		if(dataReady) //if fps data is good and ready
+		if(dataReady) //if fps data is good an d ready
 		{
 			//Energy (in joules) = 1/2 mass * velocity^2
 			//therefore normalized Velocity (0.20g) = sqrt((0.5*bbweight*fps^2)*2/0.20)
@@ -449,7 +464,6 @@ void drawScreen()
 		// if bbCount is cleared, just display 0.0 for avg fps
 		lcd.print(bbCount == 0? 0.0 : averageSum / bbCount);
 		lcd.print(" BB:");
-		lcd.print(bbCount);	//doing bbcounts for now instead of max diff
 		lcd.print("   "); // Clear rest of Row 1
 		
 		// Printing Bottom row "Max Diff:XXX.XX  "
