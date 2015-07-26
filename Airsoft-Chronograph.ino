@@ -464,6 +464,7 @@ void drawScreen()
 		// if bbCount is cleared, just display 0.0 for avg fps
 		lcd.print(bbCount == 0? 0.0 : averageSum / bbCount);
 		lcd.print(" BB:");
+		lcd.print(bbCount > 99?  99: bbCount);	// If bbcount is > 99 only display 99
 		lcd.print("   "); // Clear rest of Row 1
 		
 		// Printing Bottom row "Max Diff:XXX.XX  "
