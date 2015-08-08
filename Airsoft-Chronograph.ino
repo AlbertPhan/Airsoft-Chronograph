@@ -30,6 +30,7 @@ AIN1 D7 Negative pin (reference pin) ~0.3-1V
 #define TIMEOUTTIME (20/4.096)	//20 ms/1 overflow time 4.096 mS
 #define BBMINTIME 10			// in us
 #define FPSCONVERSIONFACTOR 3.28084	// meters per second to feet per second
+#define BBWEIGHTTOKG 100000	// bbWeight conversion to KG
 
 #define OK_BTN 5
 #define DOWN_BTN 4
@@ -42,11 +43,12 @@ AIN1 D7 Negative pin (reference pin) ~0.3-1V
 
 
 
-#define	NORMALIZED 3
+#define	NORMALIZED 4
+#define JOULES 3
 #define	AVERAGING 2
 #define MINMAX 1
 #define	RATEOFFIRE 0
-#define MAXMENUS 3
+#define MAXMENUS 4
 
 Bounce okBtn(OK_BTN,DEBOUNCE_TIME);
 Bounce upBtn(UP_BTN, DEBOUNCE_TIME);
@@ -75,6 +77,7 @@ double fps = 338.06;	//initially 338.06 for testing because it's 400 fps normali
 double normalizedfps = 0;
 double minfps = 10000;
 double maxfps = 0;
+
 //double averagefps = 0;
 double averageSum = 0;
 
@@ -226,8 +229,8 @@ void loop()
 			menuDecrementFlag = 1;
 		}
 	}
-	// If ok button is pressed in any menu except NORMALIZED then clear data
-	if(menuState != NORMALIZED && okBtn.rose())
+	// If ok button is pressed in any menu except NORMALIZED and JOULES then clear data
+	if(okBtn.rose() && !(menuState == NORMALIZED || menuState == JOULES))
 	{
 		fps = 0;
 		bbCount = 0;
@@ -281,8 +284,8 @@ void loop()
 	}
 
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Normalized Menu specific code
-	if(menuState == NORMALIZED)
+	// Normalized and JOULES Menu specific code
+	if(menuState == NORMALIZED || menuState == JOULES)
 	{
 		//button code for normalized menu
 		if(okBtn.rose())	//ok button pressed?
@@ -346,6 +349,7 @@ void loop()
 		{
 			// Printing top row: "FPS|0.28g:XXX.XX"
 			//		bottom  row: "FPS|0.20g:XXX.XX"
+			//	OR other bottom: "Joules: X.XX     "
 			//	column:			  01234567890123456
 			drawScreen();
 		}
@@ -443,7 +447,7 @@ void drawScreen()
 		lcd.print("FPS|0.20g:");
 		lcd.print("      "); //clears the fps space
 		lcd.setCursor(10,1);
-		if(dataReady) //if fps data is good an d ready
+		if(dataReady) //if fps data is good and ready
 		{
 			//Energy (in joules) = 1/2 mass * velocity^2
 			//therefore normalized Velocity (0.20g) = sqrt((0.5*bbweight*fps^2)*2/0.20)
@@ -454,6 +458,45 @@ void drawScreen()
 			lcd.print("XXX.XX");
 		}
 		// done updating
+	}
+	else if(menuState == JOULES)
+	{
+		// Printing top row: "FPS|0.28g:XXX.XX"
+		lcd.home();
+		lcd.print("FPS|0.");
+		// If bbWeight is a single digit, add leading zero
+		if(bbWeight < 10)
+		{
+			lcd.print("0");
+		}
+		lcd.print(bbWeight);
+		lcd.print("g:");
+		lcd.print("      "); //clears the fps space
+		lcd.setCursor(10,0);
+		if(dataReady) //if no error
+		{
+			lcd.print(fps);
+		}
+		else
+		{
+			lcd.print("XXX.XX");
+		}
+		
+		// Printing bottom row:"Joules: X.XX     
+		//					    01234567890123456
+		lcd.setCursor(0,1);
+		lcd.print("Joules:   ");
+		if(dataReady) //Data ready? display joules, else display X.XX
+		{
+			// Energy (in joules) = 1/2 mass * velocity^2
+			lcd.print(0.5 * bbWeight/BBWEIGHTTOKG * sq(fps/FPSCONVERSIONFACTOR));
+		}
+		else
+		{
+			lcd.print("X.XX");
+		}
+		lcd.print("     ");	// Clear rest of row 2
+		
 	}
 	else if(menuState == AVERAGING)
 	{
@@ -477,18 +520,18 @@ void drawScreen()
 	}
 	else if(menuState == MINMAX)
 	{
-		// Printing top row "MIN:xxx.xx       "
+		// Printing top row "MIN:xxx.xx J:X.XX
 		//					 01234567890123456
-		// Printing bot row "MAX:xxx.xx       "
+		// Printing bot row "MAX:xxx.xx    
 		lcd.home();
 		lcd.print("MIN:");
 		// If minfps represents real data then display it
-		lcd.print(minfps == 10000? 0.0 :  minfps);
-		lcd.print("   "); //clear rest of row 1
+		lcd.print(minfps == 10000? 0.0:  minfps);
+		lcd.print("   ");	//clear rest of row 1
 		lcd.setCursor(0,1);
 		lcd.print("MAX:");
 		lcd.print(maxfps);
-		lcd.print("   "); //clear rest of row 1
+		lcd.print("   ");	//clear rest of row 2
 		
 	}
 	else if (menuState == RATEOFFIRE)
