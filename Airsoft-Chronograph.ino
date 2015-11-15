@@ -3,6 +3,7 @@
 Project: Airsoft Chronograph
 Author: Albert Phan
 Date started: March 20, 2015
+Last Update: November 15, 2015
 
 Pinouts
 
@@ -27,7 +28,10 @@ AIN1 D7 Negative pin (reference pin) ~0.3-1V
 
 #define IRSPACING 0.080 //80 mm
 #define CLKPERIOD 0.0000000625  //62.5 nS 16MHz external Oscillator
-#define TIMEOUTTIME (20/4.096)	//20 ms/1 overflow time 4.096 mS
+#define T1OVFPERIOD 0.004096		// 4.096 ms overflow timer1 period
+#define TIMEOUTTIME (0.020/T1OVFPERIOD)	//20 ms/1 overflow time 4.096 mS
+#define T2OVFPERIOD 0.000016			// 16 uS Timer2 overflow period		
+#define ROFTIMEOUTTIME (0.5/T2OVFPERIOD) // timeout time in seconds/ OVF period
 #define BBMINTIME 10			// in us
 #define FPSCONVERSIONFACTOR 3.28084	// meters per second to feet per second
 #define BBWEIGHTTOKG 100000	// bbWeight conversion to KG
@@ -59,6 +63,7 @@ LiquidCrystal_I2C lcd(0x27,16,2);  // set the LCD address to 0x27 for a 16 chars
 
 unsigned char bbPresent = 0;
 unsigned char dataReady = 0;
+unsigned char rofReady = 1;
 unsigned char updateFlag = 0;
 unsigned char editingFlag = 0;
 unsigned char bbDecrementFlag = 0;
@@ -67,16 +72,19 @@ unsigned char menuIncrementFlag = 0;
 unsigned char menuDecrementFlag = 0;
 unsigned char ledState = 0;
 
-unsigned long int timerOverflows = 0;
+unsigned long int timer1Overflows = 0;
+unsigned long int timer2Overflows = 0;
 unsigned long int previous_millis = 0;
 unsigned long int previous_micros = 0;
+unsigned long int previous_rofmicros = 0;
 
 unsigned int bbCount = 0;
-
-double fps = 338.06;	//initially 338.06 for testing because it's 400 fps normalized
+unsigned int prevbbCount = 0;
+double fps = 338.06;	// initially 338.06 for testing because it's 400 fps normalized
 double normalizedfps = 0;
-double minfps = 10000;
+double minfps = 10000;	// default values
 double maxfps = 0;
+double bps = 0;	// BBs per second
 
 //double averagefps = 0;
 double averageSum = 0;
@@ -94,9 +102,11 @@ ISR (ANALOG_COMP_vect) // When bb passes or leaves an IR beam (or a noise spike)
 	if(ACSR & bit(ACO))	//Comp output rose
 	{
 		previous_micros = micros();
+		digitalWrite(LED_PIN, HIGH);	//debugging led
 	}
 	else // Comp output fell
 	{
+		digitalWrite(LED_PIN, LOW);		//debugging led
 		if((micros() - previous_micros ) > BBMINTIME) // Comp output pulse is a bb and not a noise spike
 		{
 			if(bbPresent)  //if bb hit second beam
@@ -104,7 +114,7 @@ ISR (ANALOG_COMP_vect) // When bb passes or leaves an IR beam (or a noise spike)
 				//stop timer1
 				TCCR1B = 0;
 				bbPresent = 0;
-				fps = IRSPACING/((TCNT1 + timerOverflows * 65536) * CLKPERIOD) * FPSCONVERSIONFACTOR;
+				fps = IRSPACING/((TCNT1 + timer1Overflows * 65536) * CLKPERIOD) * FPSCONVERSIONFACTOR;
 				
 				// discard any ridiculous values
 				if(fps <= 5000)
@@ -121,7 +131,7 @@ ISR (ANALOG_COMP_vect) // When bb passes or leaves an IR beam (or a noise spike)
 			{
 				//start timer1
 				TCNT1 = 0; //clear timer
-				timerOverflows = 0; //clear overflows
+				timer1Overflows = 0; //clear overflows
 				TCCR1B = bit(CS10);  // No prescaling 16 Mhz = 62.5 nS period
 				bbPresent = 1;
 			}
@@ -133,7 +143,7 @@ ISR (ANALOG_COMP_vect) // When bb passes or leaves an IR beam (or a noise spike)
 
 ISR (TIMER1_OVF_vect)  //handles timer1 overflows
 {
-	if(timerOverflows > TIMEOUTTIME)//if bb timeouts (doesnt hit second beam)
+	if(timer1Overflows > TIMEOUTTIME)	//if bb timeouts (doesnt hit second beam)
 	{
 		//stop timer
 		TCCR1B = 0;
@@ -143,7 +153,38 @@ ISR (TIMER1_OVF_vect)  //handles timer1 overflows
 	}
 	else
 	{
-		timerOverflows++;
+		timer1Overflows++;
+	}
+	
+}
+ISR (TIMER2_OVF_vect)  //handles timer2 overflows
+{
+	if(timer2Overflows > ROFTIMEOUTTIME)	// X amount of time after last bb shot measured
+	{
+		rofReady = 1; // Burst over, ready to start the timer of next burst
+		TCCR2B = 0;	//stop timer
+		
+		// BBs per second calculation
+		if(bbCount - prevbbCount > 2)	// Only do calculation if multiple bbs were fired
+		{
+			// bps = amount of bbs during burst/ time during burst
+			bps = (bbCount - prevbbCount)/((micros() - previous_rofmicros)/1000000.0 - ROFTIMEOUTTIME*T2OVFPERIOD);
+		}
+		
+		
+		prevbbCount = bbCount;
+
+		if(menuState == RATEOFFIRE)	// Update immediately if in rateoffire screen otherwise no need to update
+		{
+			updateFlag = 1;
+		}
+		
+	}
+	else
+	{
+		timer2Overflows++;
+
+
 	}
 	
 }
@@ -166,13 +207,17 @@ void setup()
 	pinMode(UP_BTN, INPUT);
 	pinMode(TEST_BTN, INPUT);
 	
+	// timer0 used for delay functions in lcd library do not use timer0
 	
 	//16 bit Timer1 setup (used for bb fps calculations)
 	TCCR1A = 0;  //normal mode counts up to 0xFFFF and restarts
 	TCCR1B = 0;	 //timer stopped
 	TIMSK1 |= bit(TOIE1);   // enable timer overflow interrupt
 	
-	// timer0 used for delay functions in lcd library do not use timer0
+	//8 bit Timer2 setup (used for Rate of fire timeout)
+	TCCR2A = 0; //normal mode
+	TCCR2B = 0; //timer stopped
+	TIMSK2 |= bit(TOIE2);	// enable tof interrupt
 	
 	// Serial stuff for debugging
 	Serial.begin(115200);
@@ -234,10 +279,14 @@ void loop()
 	{
 		fps = 0;
 		bbCount = 0;
+		prevbbCount = 0;
+		rofReady = 1;
 		averageSum = 0;
+		bps = 0;
 		minfps = 10000;
 		maxfps = 0;
 		updateFlag = 1;
+	
 	}
 	
 	if(menuIncrementFlag)
@@ -405,7 +454,18 @@ void fpsReady()
 	bbCount++;
 	averageSum += fps;
 	
-	// Figures out smallest and larget fps
+	//start timer2 for ROF timeout
+	TCNT2 = 0; // resets timer for the timeout
+	timer2Overflows = 0; // clear overflows
+	TCCR2B = bit(CS20);  // No prescaling 16 Mhz = 62.5 nS period
+	
+	if(rofReady)	// Start of bb ROF burst
+	{
+		previous_rofmicros = micros(); // time at start of ROF burst
+		rofReady = 0;	
+	}
+	
+	
 	if(fps < minfps)
 	{
 		minfps = fps;
@@ -538,7 +598,10 @@ void drawScreen()
 	{
 		
 		lcd.home();
-		lcd.print("RATEOFFIRE MENU");
+		lcd.print("BPS:");
+		lcd.print(bps);
+		lcd.print("          "); //clear rest of row 1
+		lcd.setCursor(0,1);
 	}
 	updateFlag = 0;
 }
