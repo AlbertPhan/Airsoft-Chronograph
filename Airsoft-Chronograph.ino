@@ -3,7 +3,7 @@
 Project: Airsoft Chronograph
 Author: Albert Phan
 Date started: March 20, 2015
-Last Update: November 15, 2015
+Last Update: Dec 13, 2015
 
 Pinouts
 
@@ -197,8 +197,12 @@ void setup()
 	| bit(ACIE)    // Analog Comparator Interrupt Enable
 	
 	& ~bit(ACIS1)  // ACIS1, ACIS0: Analog Comparator Interrupt Mode Select (trigger on toggle)
-	& ~bit(ACIS0);
+	& ~bit(ACIS0);                                             
 	
+	ADMUX |= bit(REFS1) 
+	|bit(REFS0);
+	
+	//analogReference(INTERNAL); // Set AREF to internal 1.1V for use with comparator
 	
 	// Pin Setups
 	pinMode(LED_PIN, OUTPUT); // Debugging led
@@ -602,6 +606,7 @@ void drawScreen()
 		lcd.print(bps);
 		lcd.print("          "); //clear rest of row 1
 		lcd.setCursor(0,1);
+		lcd.print(ADMUX,2);	// debugging
 	}
 	updateFlag = 0;
 }
